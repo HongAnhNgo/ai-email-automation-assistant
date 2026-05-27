@@ -1,0 +1,304 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "triggers": {
+      "When_a_new_email_arrives_(V3)": {
+        "type": "ApiConnectionNotification",
+        "inputs": {
+          "host": {
+            "connection": {
+              "name": "@parameters('$connections')['office365']['connectionId']"
+            }
+          },
+          "fetch": {
+            "pathTemplate": {
+              "template": "/v3/Mail/OnNewEmail"
+            },
+            "method": "get",
+            "queries": {
+              "importance": "Any",
+              "fetchOnlyWithAttachment": false,
+              "includeAttachments": false,
+              "subjectFilter": "N/A",
+              "folderPath": "Inbox"
+            }
+          },
+          "subscribe": {
+            "body": {
+              "NotificationUrl": "@listCallbackUrl()"
+            },
+            "pathTemplate": {
+              "template": "/GraphMailSubscriptionPoke/$subscriptions"
+            },
+            "method": "post",
+            "queries": {
+              "importance": "Any",
+              "fetchOnlyWithAttachment": false,
+              "folderPath": "Inbox"
+            }
+          }
+        },
+        "splitOn": "@triggerBody()?['value']"
+      }
+    },
+    "actions": {
+      "Html_to_text": {
+        "type": "ApiConnection",
+        "inputs": {
+          "host": {
+            "connection": {
+              "name": "@parameters('$connections')['conversionservice']['connectionId']"
+            }
+          },
+          "method": "post",
+          "body": "<p class=\"editor-paragraph\"><br>@{triggerBody()?['body']}</p>",
+          "path": "/html2text"
+        },
+        "runAfter": {}
+      },
+      "Creates_a_completion_for_the_chat_message": {
+        "type": "ApiConnection",
+        "inputs": {
+          "host": {
+            "connection": {
+              "name": "@parameters('$connections')['azureopenai-2']['connectionId']"
+            }
+          },
+          "method": "post",
+          "body": {
+            "messages": [
+              {
+                "role": "assistant",
+                "content": "Analyze the following customer email.\n\nExtract:\n- customer_name\n- order_id\n- issue_type\n- urgency\n- summary\n\nPossible issue types:\n- Order Delay\n- Damaged Item\n- Refund Request\n- Invoice Request\n- Product Inquiry\n- Bulk Order\n- Complaint\n- Other\n\nUrgency levels:\n- Low\n- Medium\n- High\n\nAlso generate:\n- professional_reply\n\nReturn ONLY valid JSON.\n\nEmail:\n@{body('Html_to_text')}\n"
+              }
+            ],
+            "temperature": 1,
+            "top_p": 1,
+            "stream": false,
+            "stop": null,
+            "presence_penalty": 0,
+            "frequency_penalty": 0,
+            "n": 1,
+            "seed": 0,
+            "logprobs": false,
+            "response_format": {
+              "type": "text"
+            }
+          },
+          "path": "/2024-02-15-preview/deployments/@{encodeURIComponent('gpt-5.4-mini')}/chat/completions",
+          "queries": {
+            "api-version": "2024-12-01-preview"
+          }
+        },
+        "runAfter": {
+          "Html_to_text": [
+            "Succeeded"
+          ]
+        }
+      },
+      "Parse_JSON": {
+        "type": "ParseJson",
+        "inputs": {
+          "content": "@outputs('Compose')",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "customer_name": {
+                "type": "string"
+              },
+              "order_id": {
+                "type": "string"
+              },
+              "issue_type": {
+                "type": "string"
+              },
+              "urgency": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "professional_reply": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "runAfter": {
+          "Compose": [
+            "Succeeded"
+          ]
+        }
+      },
+      "Compose": {
+        "type": "Compose",
+        "inputs": "@first(body('Creates_a_completion_for_the_chat_message')?['choices'])?['message']?['content']",
+        "runAfter": {
+          "Creates_a_completion_for_the_chat_message": [
+            "Succeeded"
+          ]
+        }
+      },
+      "Condition": {
+        "type": "If",
+        "expression": {
+          "and": [
+            {
+              "not": {
+                "equals": [
+                  "@body('Parse_JSON')?['customer_name']",
+                  ""
+                ]
+              }
+            },
+            {
+              "not": {
+                "equals": [
+                  "@body('Parse_JSON')?['order_id']",
+                  ""
+                ]
+              }
+            },
+            {
+              "not": {
+                "equals": [
+                  "@body('Parse_JSON')?['issue_type']",
+                  ""
+                ]
+              }
+            },
+            {
+              "not": {
+                "equals": [
+                  "@body('Parse_JSON')?['urgency']",
+                  ""
+                ]
+              }
+            }
+          ]
+        },
+        "actions": {
+          "Draft_an_email_message": {
+            "type": "ApiConnection",
+            "inputs": {
+              "host": {
+                "connection": {
+                  "name": "@parameters('$connections')['office365']['connectionId']"
+                }
+              },
+              "method": "post",
+              "body": {
+                "To": "@triggerBody()?['from']",
+                "Subject": "#@{body('Parse_JSON')?['order_id']}",
+                "Body": "<div style=\"margin:0;padding:0;background-color:#FFF7F1;font-family:'Nunito',Arial,sans-serif;\">\n  <table cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"background-color:#FFF7F1;padding:40px 0;\">\n    <tbody><tr>\n      <td>\n\n        <table cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"background:#ffffff;border-radius:24px;padding:40px;\n          box-shadow:0 8px 24px rgba(0,0,0,0.06);\">\n\n          <tbody><tr>\n            <td style=\"padding-bottom:24px;\">\n              <img src=\"https://example.com/logo.png\" alt=\"Company Logo\" style=\"display:block;border:0;max-width:220px;height:auto;\">\n            </td>\n          </tr>\n\n          <tr>\n            <td>\n              <div style=\"height:4px;\n                width:100%;\n                background:linear-gradient(90deg,#FF7FA8,#FFC7B5,#CDB7FF);\n                border-radius:999px;\n                margin-bottom:32px;\"></div>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"color:#444444;\n              font-size:16px;\n              line-height:1.8;\">\n\n              @{concat(\n  '<p>',\n  join(\n    split(body('Parse_JSON')?['professional_reply'], decodeUriComponent('%0A')),\n    '</p><p>'\n  ),\n  '</p>'\n)}\n\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding-top:40px;\">\n\n              <div style=\"background:#FFF7F1;\n                border-radius:18px;\n                padding:20px;\">\n\n                <div style=\"color:#E85A70;\n                  font-size:18px;\n                  font-weight:700;\n                  margin-bottom:8px;\">\n                  ✨ Thank you for choosing [Brand Name] ✨\n                </div>\n\n                <div style=\"color:#777777;\n                  font-size:14px;\n                  line-height:1.6;\">\n                  Brand tagline or short description here.\n                </div>\n\n              </div>\n\n            </td>\n          </tr>\n\n        </tbody></table>\n\n      </td>\n    </tr>\n  </tbody></table>\n</div>",
+                "Importance": "Normal"
+              },
+              "path": "/Draft"
+            },
+            "runAfter": {
+              "Insert_row_(V2)": [
+                "Succeeded"
+              ]
+            }
+          },
+          "Post_message_in_a_chat_or_channel": {
+            "type": "ApiConnection",
+            "inputs": {
+              "host": {
+                "connection": {
+                  "name": "@parameters('$connections')['teams']['connectionId']"
+                }
+              },
+              "method": "post",
+              "body": {
+                "recipient": "N/A",
+                "messageBody": "<p class=\"editor-paragraph\"><b><strong class=\"editor-text-bold\">New Customer Issue<br></strong></b><br>Customer: @{body('Parse_JSON')?['customer_name']}<br>Order: @{body('Parse_JSON')?['order_id']}<br>Issue: @{body('Parse_JSON')?['issue_type']}<br>Urgency: @{body('Parse_JSON')?['urgency']}<br><br>Summary:</p><br><p class=\"editor-paragraph\">@{body('Parse_JSON')?['summary']}</p>"
+              },
+              "path": "/beta/teams/conversation/message/poster/Flow bot/location/@{encodeURIComponent('Chat with Flow bot')}"
+            },
+            "runAfter": {
+              "Draft_an_email_message": [
+                "Succeeded"
+              ]
+            }
+          },
+          "Insert_row_(V2)": {
+            "type": "ApiConnection",
+            "inputs": {
+              "host": {
+                "connection": {
+                  "name": "@parameters('$connections')['sql']['connectionId']"
+                }
+              },
+              "method": "post",
+              "body": {
+                "CustomerEmail": "@triggerBody()?['from']",
+                "CustomerName": "@body('Parse_JSON')?['customer_name']",
+                "OrderId": "@body('Parse_JSON')?['order_id']",
+                "IssueType": "@body('Parse_JSON')?['issue_type']",
+                "Urgency": "@body('Parse_JSON')?['urgency']",
+                "Summary": "@body('Parse_JSON')?['summary']",
+                "SuggestedReply": "@body('Parse_JSON')?['professional_reply']",
+                "CreatedAt": "@triggerBody()?['receivedDateTime']"
+              },
+              "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('N/A'))},@{encodeURIComponent(encodeURIComponent('N/A'))}/tables/@{encodeURIComponent(encodeURIComponent('[dbo].[EmailTickets]'))}/items"
+            }
+          }
+        },
+        "else": {
+          "actions": {}
+        },
+        "runAfter": {
+          "Parse_JSON": [
+            "Succeeded"
+          ]
+        }
+      }
+    },
+    "outputs": {},
+    "parameters": {
+      "$connections": {
+        "type": "Object",
+        "defaultValue": {}
+      }
+    }
+  },
+  "parameters": {
+    "$connections": {
+      "type": "Object",
+      "value": {
+        "office365": {
+          "id": "/subscriptions/N/A/providers/Microsoft.Web/locations/N/A/managedApis/office365",
+          "connectionId": "/subscriptions/N/A/resourceGroups/N/A/providers/Microsoft.Web/connections/office365",
+          "connectionName": "office365",
+          "connectionProperties": {}
+        },
+        "conversionservice": {
+          "id": "/subscriptions/N/A/providers/Microsoft.Web/locations/N/A/managedApis/conversionservice",
+          "connectionId": "/subscriptions/N/A/resourceGroups/N/A/providers/Microsoft.Web/connections/conversionservice",
+          "connectionName": "conversionservice",
+          "connectionProperties": {}
+        },
+        "azureopenai-2": {
+          "id": "/subscriptions/N/A/providers/Microsoft.Web/locations/N/A/managedApis/azureopenai",
+          "connectionId": "/subscriptions/N/A/resourceGroups/N/A/providers/Microsoft.Web/connections/azureopenai",
+          "connectionName": "azureopenai",
+          "connectionProperties": {}
+        },
+        "teams": {
+          "id": "/subscriptions/N/A/providers/Microsoft.Web/locations/N/A/managedApis/teams",
+          "connectionId": "/subscriptions/N/A/resourceGroups/N/A/providers/Microsoft.Web/connections/teams",
+          "connectionName": "teams",
+          "connectionProperties": {}
+        },
+        "sql": {
+          "id": "/subscriptions/N/A/providers/Microsoft.Web/locations/N/A/managedApis/sql",
+          "connectionId": "/subscriptions/N/A/resourceGroups/N/A/providers/Microsoft.Web/connections/sql",
+          "connectionName": "sql",
+          "connectionProperties": {}
+        }
+      }
+    }
+  }
+}
