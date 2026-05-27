@@ -37,7 +37,9 @@ AI-powered customer support automation workflow built using Azure Logic Apps, Az
 
 ## Screenshots
 
-[screenshots]
+![Logic App Designer Email Automation](assets/Logic-App-Email-Automation.png)
+
+![Email Draft To Customer](assets/Email Draft.png)
 
 ## Example AI Output
 
