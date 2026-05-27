@@ -46,5 +46,7 @@ AI-powered customer support automation workflow built using Azure Logic Apps, Az
   "customer_name": "Sarah Lim",
   "order_id": "ORD-28471",
   "issue_type": "Damaged Item",
-  "urgency": "High"
-} 
+  "urgency": "High",
+  "summary": "Customer received damaged notebooks.",
+  "professional_reply": "Dear Sarah..."
+}
