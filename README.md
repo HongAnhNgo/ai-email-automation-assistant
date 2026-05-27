@@ -47,4 +47,4 @@ AI-powered customer support automation workflow built using Azure Logic Apps, Az
   "order_id": "ORD-28471",
   "issue_type": "Damaged Item",
   "urgency": "High"
-} ```
+} 
